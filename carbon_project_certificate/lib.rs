@@ -69,16 +69,26 @@ mod carbon_project_certificate {
     #[derive(scale::Decode, scale::Encode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout))]
     pub struct Metadata {
-        /// Carbon project title.
-        title: String,
+        /// Carbon project name.
+        name: String,
+        /// Carbon project description.
+        description: String,
         /// Carbon project value.
-        carbon_value: Balance,
-        /// Carbon project price - USDT
+        amount: Balance,
+        /// Carbon project price - USDT.
         price: Balance,
-        /// Carbon project origin (company name)
+        /// Carbon project origin (company name).
         origin: String,
-        /// Project carbon image url
+        /// Carbon project proceduce address.
+        address: String,
+        /// Project carbon proceduce start date.
+        start_date: String,
+        /// Project carbon proceduce end date.
+        end_date: String,
+        /// Project carbon image url.
         image_url: String,
+        /// Check carbon project NFT is convert to carbon token (ERC-20).
+        is_carbon_tokenized : bool,
     }
 
     #[ink(storage)]
@@ -108,6 +118,7 @@ mod carbon_project_certificate {
         CannotInsert,
         CannotFetchValue,
         NotAllowed,
+        TokenizedBefore,
     }
 
     /// Event emitted when a token transfer occurs.
@@ -141,6 +152,17 @@ mod carbon_project_certificate {
         #[ink(topic)]
         operator: AccountId,
         approved: bool,
+    }
+
+    /// Event emitted when an owner tokenize carbon project certificate
+    #[ink(event)]
+    pub struct CarbonTokenize {
+        #[ink(topic)]
+        carbon_project_id: TokenId,
+        #[ink(topic)]
+        owner: AccountId,
+        #[ink(topic)]
+        amount: Balance,
     }
 
     impl CarbonProjectCertificate {
@@ -220,12 +242,23 @@ mod carbon_project_certificate {
 
         /// Creates a new token.
         #[ink(message)]
-        pub fn mint(&mut self, id: TokenId, title:String, carbon_value: Balance, price: Balance, origin: String, image_url: String) -> Result<(), Error> {
+        pub fn mint(&mut self, 
+            id: TokenId, 
+            name:String, 
+            description: String,
+            amount: Balance, 
+            price: Balance, 
+            origin: String, 
+            address: String,
+            start_date: String,
+            end_date: String,
+            image_url: String
+        ) -> Result<(), Error> {
             let caller = self.env().caller();
             self.add_token_to(&caller, id)?;
 
             // init metadata
-            let metadata = Metadata{title, carbon_value, price, origin, image_url};
+            let metadata = Metadata{name, description, amount, price, origin, address, start_date, end_date, image_url, is_carbon_tokenized: false};
 
             // store metadata
             self.token_metadata.insert(id, &metadata);
@@ -272,6 +305,40 @@ mod carbon_project_certificate {
                 from: Some(caller),
                 to: Some(AccountId::from([0x0; 32])),
                 id,
+            });
+
+            Ok(())
+        }
+
+        /// Tokenize Project Carbon Certificate to carbon token
+        #[ink(message)]
+        pub fn carbon_tokenize(&mut self, id: TokenId) -> Result<(), Error> {
+            let caller = self.env().caller();
+            let Self {
+                token_owner,
+                ..
+            } = self;
+
+            let owner = token_owner.get(id).ok_or(Error::TokenNotFound)?;
+            if owner != caller {
+                return Err(Error::NotOwner)
+            };
+
+            let mut metadata = self.get_token_metadata(id);
+
+            if metadata.is_carbon_tokenized {
+                return Err(Error::TokenizedBefore)
+            }
+
+            metadata.is_carbon_tokenized = true;
+            self.token_metadata.insert(id, &metadata);
+
+            // call carbon token contract ......
+
+            self.env().emit_event(CarbonTokenize {
+                carbon_project_id: id,
+                owner: caller,
+                amount: metadata.amount,
             });
 
             Ok(())
@@ -416,7 +483,17 @@ mod carbon_project_certificate {
         /// Get token metadata
         #[ink(message)]
         pub fn get_token_metadata(&self, id: TokenId) -> Metadata {
-            let temp = Metadata { title : String::from("null"), carbon_value: 0,  price: 0, origin: String::from("null"), image_url: String::from("null")};
+            let temp = Metadata { name : String::from("null"), 
+                                  description : String::from("null"), 
+                                  amount: 0,  
+                                  price: 0, 
+                                  origin: String::from("null"),
+                                  address: String::from("null"),
+                                  start_date: String::from("null"),
+                                  end_date: String::from("null"), 
+                                  image_url: String::from("null"),
+                                  is_carbon_tokenized: false
+                                };
             self.token_metadata.get(id).unwrap_or(temp)
         }
 
