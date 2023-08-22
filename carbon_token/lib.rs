@@ -33,6 +33,24 @@ mod carbon_token {
         value: Balance,
     }
 
+    #[ink(event)]
+    pub struct Mint {
+        #[ink(topic)]
+        minter: AccountId,
+        #[ink(topic)]
+        amount: Balance,
+    }
+
+    #[ink(event)]
+    pub struct Burn {
+        #[ink(topic)]
+        from: AccountId,
+        #[ink(topic)]
+        to: AccountId,
+        #[ink(topic)]
+        amount: Balance,
+    }
+
     /// Specify ERC-20 error type.
     #[derive(Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
@@ -49,7 +67,8 @@ mod carbon_token {
     impl CarbonToken {
         /// Create a new ERC-20 contract with an initial supply.
         #[ink(constructor)]
-        pub fn new(total_supply: Balance) -> Self {
+        pub fn new() -> Self {
+            let total_supply = Balance::default();
             let mut balances = Mapping::default();
             let caller = Self::env().caller();
             balances.insert(caller, &total_supply);
@@ -149,6 +168,54 @@ mod carbon_token {
         #[ink(message)]
         pub fn allowance(&self, owner: AccountId, spender: AccountId) -> Balance {
             self.allowances.get((owner, spender)).unwrap_or_default()
+        }
+
+        #[ink(message)]
+        pub fn mint(&mut self, amount: Balance) -> Result<()> {
+            let caller = Self::env().caller();
+
+            // update total supply
+            let current_total_supply = self.total_supply();
+            self.total_supply = current_total_supply + amount;
+
+            // update minter balance
+            let minter_balance = self.balance_of(caller);
+            self.balances.insert(caller, &(minter_balance + amount));
+
+            Self::env().emit_event(Mint {
+                minter: caller,
+                amount: amount,
+            });
+
+            Ok(())
+        }
+
+        #[ink(message)]
+        pub fn burn(&mut self, amount: Balance) -> Result<()> {
+            let caller = Self::env().caller();
+
+            // check burn able
+            let burner_balance = self.balance_of(caller);
+            let current_total_supply = self.total_supply();
+            if burner_balance < amount || current_total_supply < amount {
+                return Err(Error::InsufficientBalance);
+            }
+
+            // update total supply
+            let current_total_supply = self.total_supply();
+            self.total_supply = current_total_supply - amount;
+
+            // update burner balance
+            let burner_balance = self.balance_of(caller);
+            self.balances.insert(caller, &(burner_balance - amount));
+
+            Self::env().emit_event(Burn {
+                from: caller,
+                to: AccountId::from([0x0; 32]),
+                amount: amount,
+            });
+
+            Ok(())
         }
     }
 
