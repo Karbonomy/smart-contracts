@@ -115,5 +115,107 @@ mod dex {
                 self.fees,
             )
         }
+
+        /// Returns amount of Token1 required when providing liquidity with _amountToken2 quantity of Token2
+        #[ink(message)]
+        pub fn getEquivalentToken1Estimate(
+            &self,
+            _amountToken2: Balance,
+        ) -> Result<Balance, Error> {
+            self.activePool()?;
+            Ok(self.totalToken1 * _amountToken2 / self.totalToken2)
+        }
+
+        /// Returns amount of Token2 required when providing liquidity with _amountToken1 quantity of Token1
+        #[ink(message)]
+        pub fn getEquivalentToken2Estimate(
+            &self,
+            _amountToken1: Balance,
+        ) -> Result<Balance, Error> {
+            self.activePool()?;
+            Ok(self.totalToken2 * _amountToken1 / self.totalToken1)
+        }
+
+        /// Adding new liquidity in the pool
+        /// Returns the amount of share issued for locking given assets
+        #[ink(message)]
+        pub fn provide(
+            &mut self,
+            _amountToken1: Balance,
+            _amountToken2: Balance,
+        ) -> Result<Balance, Error> {
+            self.validAmountCheck(&self.token1Balance, _amountToken1)?;
+            self.validAmountCheck(&self.token2Balance, _amountToken2)?;
+
+            let share;
+            if self.totalShares == 0 {
+                // Genesis liquidity is issued 100 Shares
+                share = 100 * super::PRECISION;
+            } else {
+                let share1 = self.totalShares * _amountToken1 / self.totalToken1;
+                let share2 = self.totalShares * _amountToken2 / self.totalToken2;
+
+                if share1 != share2 {
+                    return Err(Error::NonEquivalentValue);
+                }
+                share = share1;
+            }
+
+            if share == 0 {
+                return Err(Error::ThresholdNotReached);
+            }
+
+            let caller = self.env().caller();
+            let token1 = *self.token1Balance.get(&caller).unwrap();
+            let token2 = *self.token2Balance.get(&caller).unwrap();
+            self.token1Balance.insert(caller, token1 - _amountToken1);
+            self.token2Balance.insert(caller, token2 - _amountToken2);
+
+            self.totalToken1 += _amountToken1;
+            self.totalToken2 += _amountToken2;
+            self.totalShares += share;
+            self.shares
+                .entry(caller)
+                .and_modify(|val| *val += share)
+                .or_insert(share);
+
+            Ok(share)
+        }
+
+        /// Returns the estimate of Token1 & Token2 that will be released on burning given _share
+        #[ink(message)]
+        pub fn getWithdrawEstimate(&self, _share: Balance) -> Result<(Balance, Balance), Error> {
+            self.activePool()?;
+            if _share > self.totalShares {
+                return Err(Error::InvalidShare);
+            }
+
+            let amountToken1 = _share * self.totalToken1 / self.totalShares;
+            let amountToken2 = _share * self.totalToken2 / self.totalShares;
+            Ok((amountToken1, amountToken2))
+        }
+
+        /// Removes liquidity from the pool and releases corresponding Token1 & Token2 to the withdrawer
+        #[ink(message)]
+        pub fn withdraw(&mut self, _share: Balance) -> Result<(Balance, Balance), Error> {
+            let caller = self.env().caller();
+            self.validAmountCheck(&self.shares, _share)?;
+
+            let (amountToken1, amountToken2) = self.getWithdrawEstimate(_share)?;
+            self.shares.entry(caller).and_modify(|val| *val -= _share);
+            self.totalShares -= _share;
+
+            self.totalToken1 -= amountToken1;
+            self.totalToken2 -= amountToken2;
+
+            self.token1Balance
+                .entry(caller)
+                .and_modify(|val| *val += amountToken1);
+            self.token2Balance
+                .entry(caller)
+                .and_modify(|val| *val += amountToken2);
+
+            Ok((amountToken1, amountToken2))
+        }
     }
 }
